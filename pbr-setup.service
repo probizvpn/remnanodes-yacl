@@ -1,0 +1,14 @@
+[Unit]
+Description=Policy-Based Routing Setup for Remnanode
+After=network-online.target docker.service
+Wants=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStartPre=/bin/sleep 10
+ExecStart=/opt/setup-pbr.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
