@@ -258,9 +258,9 @@ cd /opt/remnanode2 && docker compose logs -f -t
 
 ```bash
 # или
-cd /opt/remnanode && docker logs Remnanode
-cd /opt/remnanode1 && docker logs Remnanode1
-cd /opt/remnanode2 && docker logs Remnanode2
+cd /opt/remnanode && docker logs remnanode
+cd /opt/remnanode1 && docker logs remnanode1
+cd /opt/remnanode2 && docker logs remnanode2
 ```
 
 ```bash
