@@ -253,7 +253,7 @@ docker ps
 # Логи конкретной ноды
 cd /opt/remnanode && docker compose logs -f -t
 cd /opt/remnanode1 && docker compose logs -f -t
-cd /opt/remnanode1 && docker compose logs -f -t
+cd /opt/remnanode2 && docker compose logs -f -t
 ```
 
 ```bash
