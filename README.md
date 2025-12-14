@@ -19,9 +19,10 @@
 Этот скрипт автоматизирует процесс развёртывания **трёх нод RemnaNode** на одном сервере с разными IP-адресами. Скрипт настраивает Policy-Based Routing (PBR) для корректной маршрутизации трафика через разные сетевые интерфейсы.
 
 >ℹ️ Использование на примере Yandex Cloud с созданием виртуальной машины с 3 тремя публичными ip-адрсами
-
->⚠️ Важно! Официально, из коробки, несколько инстансов Remnanode не могут быть установлены на одной виртуальной машине, и разработчиками рекомендуется использовать 1 Remnanode = 1 VM. 
-✅ Между тем, техническая возможность установки и использования нескольких Remnanode в рамках одной виртуальной машины с несколькими публичными ip-адресами существует.
+>
+>⚠️ Важно! Официально, из коробки, несколько инстансов Remnanode не могут быть установлены на одной виртуальной машине, и разработчиками рекомендуется использовать 1 Remnanode = 1 VM.
+>
+>✅ Между тем, техническая возможность установки и использования нескольких Remnanode в рамках одной виртуальной машины с несколькими публичными ip-адресами существует.
 
 ### ✨ Возможности
 
@@ -143,7 +144,7 @@ curl -fsSL https://raw.githubusercontent.com/Capybara-z/RemnaSetup/refs/heads/ma
 ### Шаг 2: Запустите скрипт установки RemnaNode Multi-Instance Setup
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/probizvpn/remnanodes-yacl/main/install.sh | tr -d '\r' > install.sh && chmod +x install.sh && sudo bash ./install.sh
+curl -fsSL https://raw.githubusercontent.com/probizvpn/remnanodes-yacl/main/install.sh -o install.sh && chmod +x install.sh && sudo bash ./install.sh
 ```
 
 ### Шаг 3: Следуйте инструкциям
