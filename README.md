@@ -1,12 +1,12 @@
-# 🚀 RemnaNode Multi-Instance Setup
+# 🚀 Remnanode Multi-Instance Setup
 
 <div align="center">
 
-![RemnaNode](https://img.shields.io/badge/RemnaNode-Multi--Instance-blue?style=for-the-badge)
+![Remnanode](https://img.shields.io/badge/remnanode-Multi--Instance-blue?style=for-the-badge)
 ![Bash](https://img.shields.io/badge/Bash-Script-green?style=for-the-badge&logo=gnu-bash)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)
 
-**Автоматическая установка и настройка нескольких RemnaNode на одном сервере с Policy-Based Routing**
+**Автоматическая установка и настройка нескольких Remnanode на одном сервере с Policy-Based Routing**
 
 [Установка](#-быстрая-установка) • [Требования](#-требования) • [Как это работает](#-как-это-работает) • [Команды](#-полезные-команды) • [FAQ](#-faq)
 
@@ -16,9 +16,9 @@
 
 ## 📋 Описание
 
-Этот скрипт автоматизирует процесс развёртывания **трёх нод RemnaNode** на одном сервере с разными IP-адресами. Скрипт настраивает Policy-Based Routing (PBR) для корректной маршрутизации трафика через разные сетевые интерфейсы.
+Этот скрипт автоматизирует процесс развёртывания **трёх нод Remnanode** на одном сервере с разными IP-адресами. Скрипт настраивает Policy-Based Routing (PBR) для корректной маршрутизации трафика через разные сетевые интерфейсы.
 
->ℹ️ Использование на примере Yandex Cloud с созданием виртуальной машины с 3 тремя публичными ip-адрсами
+>ℹ️ Использование на примере Yandex Cloud с созданием виртуальной машины с 3 тремя публичными ip-адресами
 >
 >⚠️ Важно! Официально, из коробки, несколько инстансов Remnanode не могут быть установлены на одной виртуальной машине, и разработчиками рекомендуется использовать 1 Remnanode = 1 VM.
 >
@@ -27,7 +27,7 @@
 ### ✨ Возможности
 
 - 🔄 Автоматическое определение IP-адресов и сетевых интерфейсов
-- 📝 Модификация существующей конфигурации RemnaNode
+- 📝 Модификация существующей конфигурации Remnanode
 - 📁 Создание конфигураций для дополнительных нод
 - 🌐 Настройка Policy-Based Routing (PBR)
 - 🔧 Установка systemd-сервисов для автозапуска
@@ -55,7 +55,7 @@
 - ✅ Docker
 - ✅ Docker Compose
 - ✅ curl
-- ✅ Установленная основная нода RemnaNode в `/opt/remnanode/`
+- ✅ Установленная основная нода Remnanode в `/opt/remnanode/`
 
 ---
 
@@ -110,9 +110,9 @@ mysuser4856@compute-vm-2-2-20-ssd-1765658014436:~$ sudo -i
 ```
 и двигаемся дальше...
 
-### Шаг 1: Установите основную ноду RemnaNode
+### Шаг 1: Установите основную ноду Remnanode
 
-Если у вас ещё не установлена основная нода, установите её согласно [официальной документации RemnaWave](https://github.com/remnawave/node).
+Если у вас ещё не установлена основная нода, установите её согласно [официальной документации Remnawave](https://github.com/remnawave/node).
 
 А еще лучше, воспользоваться скриптом автоустановки RemnaSetup от [Capybara](https://github.com/Capybara-z/RemnaSetup):
 
@@ -120,7 +120,7 @@ mysuser4856@compute-vm-2-2-20-ssd-1765658014436:~$ sudo -i
 curl -fsSL https://raw.githubusercontent.com/Capybara-z/RemnaSetup/refs/heads/main/install.sh -o install.sh && chmod +x install.sh && sudo bash ./install.sh
 ```
 
->Важно! Ставим только remnanode, больше ничего не надо, ни caddy, ни другое.
+>Важно! Ставим только Remnanode, больше ничего не надо, ни caddy, ни другое.
 
 >пункты меню:
 2 - 2 - 2
@@ -141,7 +141,7 @@ curl -fsSL https://raw.githubusercontent.com/Capybara-z/RemnaSetup/refs/heads/ma
 
 >Далее добавление второй и третьей нод.
 
-### Шаг 2: Запустите скрипт установки RemnaNode Multi-Instance Setup
+### Шаг 2: Запустите скрипт установки Remnanode Multi-Instance Setup
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/probizvpn/remnanodes-yacl/main/install.sh -o install.sh && chmod +x install.sh && sudo bash ./install.sh
@@ -258,9 +258,9 @@ cd /opt/remnanode1 && docker compose logs -f -t
 
 ```bash
 # или
-cd /opt/remnanode && docker logs remnanode
-cd /opt/remnanode1 && docker logs remnanode1
-cd /opt/remnanode2 && docker logs remnanode2
+cd /opt/remnanode && docker logs Remnanode
+cd /opt/remnanode1 && docker logs Remnanode1
+cd /opt/remnanode2 && docker logs Remnanode2
 ```
 
 ```bash
@@ -416,7 +416,7 @@ remnanodes-yacl/
 
 ## 🙏 Благодарности
 
-💚 [RemnaWave](https://github.com/remnawave)
+💚 [Remnawave](https://github.com/remnawave)
  — за потрясающий проект
 
 🧡 [SoloBot Community](https://github.com/Vladless/Solo_bot)
