@@ -333,6 +333,23 @@ sudo iptables -t nat -L -n -v
 ss -tlnp | grep -E '(2222|443)'
 ```
 
+### Диагностика ноды
+
+```bash
+# Проверка конфига, который приходит на каждую ноду
+cd /opt/remnanode && docker exec remnanode wget -qO- http://127.0.0.1:61001/internal/get-config | jq
+cd /opt/remnanode1 && docker exec remnanode1 wget -qO- http://127.0.0.1:61001/internal/get-config | jq
+cd /opt/remnanode2 && docker exec remnanode2 wget -qO- http://127.0.0.1:61001/internal/get-config | jq
+```
+
+```bash
+# Проверка логов ноды
+cd /opt/remnanode && docker exec -it remnanode xlogs
+cd /opt/remnanode1 && docker exec -it remnanode1 xlogs
+cd /opt/remnanode2 && docker exec -it remnanode2 xlogs
+```
+
+
 ## ❓ FAQ
 
 ### Сколько нод можно запустить?
