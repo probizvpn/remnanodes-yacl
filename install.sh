@@ -514,7 +514,7 @@ EOF
 install_pbr_scripts() {
     print_header "Шаг 3: Установка служебных скриптов PBR"
     
-    local GITHUB_BASE="https://raw.githubusercontent.com/probizvpn/remnanodes-yacl/main"
+    local GITHUB_BASE="https://raw.githubusercontent.com/probizvpn/remnanodes-yacl/dev"
     
     # 3.1 setup-pbr.sh
     print_info "Скачивание setup-pbr.sh..."
