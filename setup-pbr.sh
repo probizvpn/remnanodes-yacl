@@ -10,7 +10,8 @@
 # - Связь контейнер -> интерфейс по IP биндингу
 # ============================================
 
-set -e
+# Убираем set -e чтобы скрипт не падал при ошибках
+# set -e
 
 echo "============================================"
 echo "  Автоматическая настройка PBR для Remnanode"
@@ -49,9 +50,16 @@ get_interface_gateway() {
 # Находим контейнер, который слушает на данном IP
 get_container_by_ip() {
     local bind_ip=$1
-    docker ps --format '{{.Names}}' | while read container; do
-        docker port "$container" 2>/dev/null | grep -q "$bind_ip:" && echo "$container" && break
+    local found_container=""
+    
+    for container in $(docker ps --format '{{.Names}}' 2>/dev/null); do
+        if docker port "$container" 2>/dev/null | grep -q "$bind_ip:"; then
+            found_container="$container"
+            break
+        fi
     done
+    
+    echo "$found_container"
 }
 
 # Получаем Docker сеть контейнера
@@ -101,6 +109,7 @@ for IFACE in $EXTRA_IFACES; do
     IFACE_IP=$(get_interface_ip "$IFACE")
     if [ -z "$IFACE_IP" ]; then
         echo "  ПРОПУСК: нет IP адреса"
+        echo ""
         continue
     fi
     echo "  IP: $IFACE_IP"
@@ -112,6 +121,7 @@ for IFACE in $EXTRA_IFACES; do
     CONTAINER=$(get_container_by_ip "$IFACE_IP")
     if [ -z "$CONTAINER" ]; then
         echo "  ПРОПУСК: контейнер не найден для IP $IFACE_IP"
+        echo ""
         continue
     fi
     echo "  Контейнер: $CONTAINER"
@@ -120,6 +130,7 @@ for IFACE in $EXTRA_IFACES; do
     DOCKER_NET=$(get_container_network "$CONTAINER")
     if [ -z "$DOCKER_NET" ]; then
         echo "  ПРОПУСК: Docker сеть не найдена"
+        echo ""
         continue
     fi
     echo "  Docker сеть: $DOCKER_NET"
@@ -128,6 +139,7 @@ for IFACE in $EXTRA_IFACES; do
     BRIDGE=$(get_bridge_by_network "$DOCKER_NET")
     if [ -z "$BRIDGE" ]; then
         echo "  ПРОПУСК: bridge не найден"
+        echo ""
         continue
     fi
     echo "  Bridge: $BRIDGE"
@@ -136,6 +148,7 @@ for IFACE in $EXTRA_IFACES; do
     DOCKER_SUBNET=$(get_docker_network_subnet "$DOCKER_NET")
     if [ -z "$DOCKER_SUBNET" ]; then
         echo "  ПРОПУСК: подсеть Docker не найдена"
+        echo ""
         continue
     fi
     echo "  Docker подсеть: $DOCKER_SUBNET"
@@ -163,12 +176,13 @@ for IFACE in $EXTRA_IFACES; do
 done
 
 if [ $INDEX -eq 0 ]; then
-    echo "Нет интерфейсов для настройки PBR."
+    echo "Нет интерфейсов с активными контейнерами для настройки PBR."
+    echo "Это нормально, если вы установили меньше дополнительных нод, чем доступно IP-адресов."
     exit 0
 fi
 
 echo "============================================"
-echo "  Применение настроек"
+echo "  Применение настроек для $INDEX интерфейсов"
 echo "============================================"
 echo ""
 
@@ -183,7 +197,7 @@ for i in $(seq 0 $((INDEX - 1))); do
     PRIORITY=${CONFIG["${i}_PRIORITY"]}
     
     if ! ip rule show | grep -q "fwmark 0x$(printf '%x' $MARK) "; then
-        ip rule add fwmark $MARK table $TABLE priority $PRIORITY
+        ip rule add fwmark $MARK table $TABLE priority $PRIORITY 2>/dev/null || true
         echo "Добавлено: fwmark $MARK -> table $TABLE (priority $PRIORITY)"
     else
         echo "Уже существует: fwmark $MARK -> table $TABLE"
@@ -201,20 +215,30 @@ for i in $(seq 0 $((INDEX - 1))); do
     TABLE=${CONFIG["${i}_TABLE"]}
     BRIDGE=${CONFIG["${i}_BRIDGE"]}
     DOCKER_SUBNET=${CONFIG["${i}_DOCKER_SUBNET"]}
+    IFACE=${CONFIG["${i}_IFACE"]}
+    GATEWAY=${CONFIG["${i}_GATEWAY"]}
     
     # Удаляем старый маршрут если есть (bridge мог измениться)
-    EXISTING=$(ip route show table $TABLE | grep "$DOCKER_SUBNET" | awk '{print $3}')
+    EXISTING=$(ip route show table $TABLE 2>/dev/null | grep "$DOCKER_SUBNET" | awk '{print $3}')
     if [ -n "$EXISTING" ] && [ "$EXISTING" != "$BRIDGE" ]; then
         ip route del $DOCKER_SUBNET table $TABLE 2>/dev/null || true
         echo "Удалён старый маршрут: $DOCKER_SUBNET dev $EXISTING table $TABLE"
     fi
     
-    # Добавляем маршрут
-    if ! ip route show table $TABLE | grep -q "$DOCKER_SUBNET.*dev $BRIDGE"; then
+    # Добавляем маршрут для Docker подсети
+    if ! ip route show table $TABLE 2>/dev/null | grep -q "$DOCKER_SUBNET.*dev $BRIDGE"; then
         ip route add $DOCKER_SUBNET dev $BRIDGE table $TABLE 2>/dev/null || true
         echo "Добавлено: $DOCKER_SUBNET dev $BRIDGE table $TABLE"
     else
         echo "Уже существует: $DOCKER_SUBNET dev $BRIDGE table $TABLE"
+    fi
+    
+    # Добавляем default маршрут через шлюз
+    if ! ip route show table $TABLE 2>/dev/null | grep -q "default via $GATEWAY"; then
+        ip route add default via $GATEWAY dev $IFACE table $TABLE 2>/dev/null || true
+        echo "Добавлено: default via $GATEWAY dev $IFACE table $TABLE"
+    else
+        echo "Уже существует: default via $GATEWAY dev $IFACE table $TABLE"
     fi
 done
 
@@ -261,12 +285,12 @@ echo ""
 # ============================================
 echo "=== Настройка sysctl ==="
 
-sysctl -w net.ipv4.conf.all.rp_filter=0 > /dev/null
+sysctl -w net.ipv4.conf.all.rp_filter=0 > /dev/null 2>&1 || true
 echo "net.ipv4.conf.all.rp_filter=0"
 
 for i in $(seq 0 $((INDEX - 1))); do
     IFACE=${CONFIG["${i}_IFACE"]}
-    sysctl -w net.ipv4.conf.${IFACE}.rp_filter=0 > /dev/null
+    sysctl -w net.ipv4.conf.${IFACE}.rp_filter=0 > /dev/null 2>&1 || true
     echo "net.ipv4.conf.${IFACE}.rp_filter=0"
 done
 
@@ -275,7 +299,6 @@ echo ""
 # ============================================
 # 5. МАРКИРОВКА ИСХОДЯЩЕГО ТРАФИКА ИЗ КОНТЕЙНЕРОВ
 # ============================================
-echo ""
 echo "=== Настройка исходящего трафика ==="
 
 for i in $(seq 0 $((INDEX - 1))); do
@@ -327,5 +350,6 @@ echo ""
 echo "Для проверки выполните с внешнего сервера:"
 for i in $(seq 0 $((INDEX - 1))); do
     IP=${CONFIG["${i}_IP"]}
-    echo "  nc -zv ВНЕШНИЙ_IP_ДЛЯ_$IP <порт ноды>"
+    CONTAINER=${CONFIG["${i}_CONTAINER"]}
+    echo "  nc -zv ВНЕШНИЙ_IP_ДЛЯ_${CONTAINER} <порт ноды>"
 done
