@@ -15,6 +15,14 @@
 
 ---
 
+<img width="136" height="123" alt="2026-01-09_00-41-32" src="https://github.com/user-attachments/assets/58666b8b-b674-439f-8290-4a97d7e66349" />
+<img width="137" height="124" alt="2026-01-09_00-42-04" src="https://github.com/user-attachments/assets/ee4d2560-f7dd-48e9-9e90-3414c461c7a0" />
+<img width="137" height="124" alt="2026-01-09_00-43-30" src="https://github.com/user-attachments/assets/3efd5916-a48a-4ce1-8ca0-e6787e61fefc" />
+<img width="137" height="124" alt="2026-01-09_00-44-14" src="https://github.com/user-attachments/assets/9cb09770-409f-4d34-9536-2b779b2bce16" />
+<img width="137" height="124" alt="2026-01-09_00-45-00" src="https://github.com/user-attachments/assets/20cf1140-cab8-4a29-bade-c11506d47942" />
+
+---
+
 ## 📋 Описание
 
 Этот скрипт автоматизирует процесс развёртывания **от 2 до 8 нод Remnanode** на одном сервере с разными IP-адресами. Скрипт автоматически определяет количество доступных IP-адресов, характеристики сервера и позволяет выбрать нужное количество дополнительных нод. Настраивает Policy-Based Routing (PBR) для корректной маршрутизации трафика через разные сетевые интерфейсы.
