@@ -3,6 +3,9 @@
 # ============================================
 # АВТОМАТИЧЕСКАЯ УСТАНОВКА И НАСТРОЙКА
 # Multi-Instance Remnanode с Policy-Based Routing
+# 
+# Версия: 2.0
+# Дата: 2025-01-08
 # ============================================
 
 set -e
@@ -16,13 +19,29 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 MAGENTA='\033[0;35m'
-ORANGE='\033[0;33m'
+ORANGE='\033[38;5;208m'
 NC='\033[0m' # No Color / Reset
 
 # ============================================
 # ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ
 # ============================================
 REINSTALL_MODE=false
+MAX_NODES=8  # Максимальное количество нод (1 основная + 7 дополнительных)
+
+# Массивы для хранения данных
+declare -a IPS=()
+declare -a IFACES=()
+declare -a PORTS=()
+declare -a SECRET_KEYS=()
+
+# Количество нод для установки
+TOTAL_NODES=0
+ADDITIONAL_NODES=0
+
+# Системные характеристики
+CPU_CORES=0
+RAM_GB=0
+RECOMMENDED_MAX_NODES=0
 
 # ============================================
 # ФУНКЦИИ ВЫВОДА
@@ -57,6 +76,163 @@ check_root() {
         print_error "Этот скрипт должен быть запущен от root (sudo)"
         exit 1
     fi
+}
+
+# ============================================
+# ПОЛУЧЕНИЕ СИСТЕМНЫХ ХАРАКТЕРИСТИК
+# ============================================
+get_system_specs() {
+    print_header "Определение характеристик системы"
+    
+    # Получаем количество CPU
+    CPU_CORES=$(nproc 2>/dev/null || grep -c ^processor /proc/cpuinfo 2>/dev/null || echo "1")
+    print_info "CPU ядер: ${CPU_CORES}"
+    
+    # Получаем количество RAM в GB
+    local ram_kb=$(grep MemTotal /proc/meminfo 2>/dev/null | awk '{print $2}')
+    if [[ -n "$ram_kb" ]]; then
+        RAM_GB=$((ram_kb / 1024 / 1024))
+        # Округляем до ближайшего целого
+        if [[ $((ram_kb / 1024 % 1024)) -gt 512 ]]; then
+            RAM_GB=$((RAM_GB + 1))
+        fi
+        # Минимум 1 GB
+        [[ $RAM_GB -lt 1 ]] && RAM_GB=1
+    else
+        RAM_GB=1
+    fi
+    print_info "RAM: ${RAM_GB} GB"
+    
+    # Определяем рекомендуемое максимальное количество нод
+    # Логика: 1 нода на каждые 0.5 CPU и 0.5 GB RAM, но не более MAX_NODES
+    local max_by_cpu=$((CPU_CORES * 2))
+    local max_by_ram=$((RAM_GB * 2))
+    
+    # Берём минимум из двух
+    if [[ $max_by_cpu -lt $max_by_ram ]]; then
+        RECOMMENDED_MAX_NODES=$max_by_cpu
+    else
+        RECOMMENDED_MAX_NODES=$max_by_ram
+    fi
+    
+    # Ограничиваем максимумом
+    [[ $RECOMMENDED_MAX_NODES -gt $MAX_NODES ]] && RECOMMENDED_MAX_NODES=$MAX_NODES
+    [[ $RECOMMENDED_MAX_NODES -lt 2 ]] && RECOMMENDED_MAX_NODES=2
+    
+    print_info "Рекомендуемое макс. количество нод: ${RECOMMENDED_MAX_NODES}"
+}
+
+# ============================================
+# ПОЛУЧЕНИЕ IP-АДРЕСОВ
+# ============================================
+get_internal_ips() {
+    print_header "Определение внутренних IP-адресов"
+    
+    # Получаем IP из ip route (src адреса default маршрутов)
+    mapfile -t IPS < <(ip route | grep "^default" | grep -oP 'src \K[\d.]+' | sort -t. -k1,1n -k2,2n -k3,3n -k4,4n)
+    
+    # Получаем интерфейсы
+    mapfile -t IFACES < <(ip route | grep "^default" | grep -oP 'dev \K\S+')
+    
+    local ip_count=${#IPS[@]}
+    
+    # Проверка минимального количества IP
+    if [[ $ip_count -lt 2 ]]; then
+        print_error "Найден только ${ip_count} IP-адрес."
+        print_error "Для работы скрипта требуется минимум 2 IP-адреса."
+        print_error "Дополнительные ноды невозможны."
+        exit 1
+    fi
+    
+    print_success "Найдено ${ip_count} IP-адресов"
+    echo ""
+    
+    # Выводим список найденных IP
+    print_info "Список найденных IP-адресов:"
+    for i in "${!IPS[@]}"; do
+        if [[ $i -eq 0 ]]; then
+            echo -e "  ${GREEN}$((i+1)).${NC} ${IPS[$i]} (${IFACES[$i]}) - ${CYAN}основная нода${NC}"
+        else
+            echo -e "  ${GREEN}$((i+1)).${NC} ${IPS[$i]} (${IFACES[$i]}) - ${YELLOW}дополнительная нода $i${NC}"
+        fi
+    done
+    echo ""
+    
+    # Ограничиваем количество IP максимумом
+    if [[ $ip_count -gt $MAX_NODES ]]; then
+        print_warning "Найдено ${ip_count} IP, но максимальное поддерживаемое количество нод: ${MAX_NODES}"
+        ip_count=$MAX_NODES
+    fi
+    
+    # Максимальное количество дополнительных нод
+    local max_additional=$((ip_count - 1))
+    
+    # Выводим рекомендации по нагрузке
+    echo ""
+    print_info "Рекомендации по нагрузке:"
+    echo -e "  ${YELLOW}Характеристики сервера:${NC} ${CPU_CORES} CPU, ${RAM_GB} GB RAM"
+    echo -e "  ${YELLOW}Рекомендуемое макс. нод:${NC} ${RECOMMENDED_MAX_NODES}"
+    echo ""
+    
+    if [[ $ip_count -gt $RECOMMENDED_MAX_NODES ]]; then
+        print_warning "Количество доступных IP (${ip_count}) превышает рекомендуемое количество нод (${RECOMMENDED_MAX_NODES})"
+        print_warning "При превышении рекомендаций сервер может быть перегружен!"
+    fi
+    
+    local potential_users=$((ip_count * 50))
+    
+    echo -e "  ${YELLOW}Если установить ${max_additional} дополнительных нод:${NC}"
+    echo -e "    - 1 основная + ${max_additional} дополнительных = ${ip_count} нод"
+    echo -e "    - При ~50 пользователей на ноду = ~${potential_users} пользователей"
+    echo ""
+    
+    # Спрашиваем количество ДОПОЛНИТЕЛЬНЫХ нод с повторным вводом при ошибке
+    while true; do
+        echo -e "${YELLOW}Сколько дополнительных нод вы хотите установить?${NC}"
+        echo -e "${YELLOW}(от 1 до ${max_additional}):${NC}"
+        read -r input_additional
+        
+        # Валидация ввода
+        if ! [[ "$input_additional" =~ ^[0-9]+$ ]]; then
+            print_error "Введите число!"
+            echo ""
+            continue
+        fi
+        
+        if [[ $input_additional -lt 1 ]]; then
+            print_error "Минимальное количество дополнительных нод: 1"
+            echo ""
+            continue
+        fi
+        
+        if [[ $input_additional -gt $max_additional ]]; then
+            print_error "Недостаточно IP-адресов. Максимум дополнительных нод: ${max_additional}"
+            echo ""
+            continue
+        fi
+        
+        if [[ $input_additional -gt $((MAX_NODES - 1)) ]]; then
+            print_error "Максимальное количество дополнительных нод: $((MAX_NODES - 1))"
+            echo ""
+            continue
+        fi
+        
+        # Ввод корректный, выходим из цикла
+        break
+    done
+    
+    ADDITIONAL_NODES=$input_additional
+    TOTAL_NODES=$((ADDITIONAL_NODES + 1))
+    
+    print_success "Будет установлено дополнительных нод: ${ADDITIONAL_NODES}"
+    echo ""
+    
+    # Выводим распределение IP по нодам
+    print_info "Распределение IP по нодам:"
+    echo -e "  ${CYAN}remnanode${NC}  -> ${IPS[0]} (${IFACES[0]})"
+    for i in $(seq 1 $ADDITIONAL_NODES); do
+        echo -e "  ${CYAN}remnanode${i}${NC} -> ${IPS[$i]} (${IFACES[$i]})"
+    done
 }
 
 # ============================================
@@ -95,23 +271,20 @@ check_prerequisites() {
     fi
     print_success "curl установлен"
     
-    # Проверка существования дополнительных нод
+    # Проверка существования дополнительных нод (динамически)
     local nodes_exist=false
     local existing_nodes=""
     
-    if [[ -d "/opt/remnanode1" ]]; then
-        nodes_exist=true
-        existing_nodes="/opt/remnanode1"
-    fi
-    
-    if [[ -d "/opt/remnanode2" ]]; then
-        nodes_exist=true
-        if [[ -n "$existing_nodes" ]]; then
-            existing_nodes="$existing_nodes, /opt/remnanode2"
-        else
-            existing_nodes="/opt/remnanode2"
+    for i in $(seq 1 $((MAX_NODES - 1))); do
+        if [[ -d "/opt/remnanode${i}" ]]; then
+            nodes_exist=true
+            if [[ -n "$existing_nodes" ]]; then
+                existing_nodes="${existing_nodes}, /opt/remnanode${i}"
+            else
+                existing_nodes="/opt/remnanode${i}"
+            fi
         fi
-    fi
+    done
     
     if [[ "$nodes_exist" == true ]]; then
         print_warning "Обнаружены существующие дополнительные ноды: ${existing_nodes}"
@@ -133,45 +306,6 @@ check_prerequisites() {
 }
 
 # ============================================
-# ПОЛУЧЕНИЕ IP-АДРЕСОВ
-# ============================================
-get_internal_ips() {
-    print_header "Определение внутренних IP-адресов"
-    
-    # Получаем IP из ip route (src адреса default маршрутов)
-    mapfile -t IPS < <(ip route | grep "^default" | grep -oP 'src \K[\d.]+' | sort -t. -k3,3n -k4,4n)
-    
-    # Также получаем интерфейсы
-    mapfile -t IFACES < <(ip route | grep "^default" | grep -oP 'dev \K\S+' | head -n ${#IPS[@]})
-    
-    if [[ ${#IPS[@]} -lt 3 ]]; then
-        print_error "Найдено только ${#IPS[@]} IP-адресов. Требуется минимум 3 для трёх нод."
-        print_info "Найденные IP: ${IPS[*]}"
-        exit 1
-    fi
-    
-    print_info "Найдены следующие IP-адреса:"
-    for i in "${!IPS[@]}"; do
-        echo -e "  ${GREEN}$((i+1)).${NC} ${IPS[$i]} (${IFACES[$i]})"
-    done
-    echo ""
-    
-    # Назначаем IP для нод
-    IP_REMNANODE="${IPS[0]}"
-    IP_REMNANODE1="${IPS[1]}"
-    IP_REMNANODE2="${IPS[2]}"
-    
-    IFACE_REMNANODE="${IFACES[0]}"
-    IFACE_REMNANODE1="${IFACES[1]}"
-    IFACE_REMNANODE2="${IFACES[2]}"
-    
-    print_info "Распределение IP по нодам:"
-    echo -e "  ${CYAN}remnanode${NC}  -> ${IP_REMNANODE} (${IFACE_REMNANODE})"
-    echo -e "  ${CYAN}remnanode1${NC} -> ${IP_REMNANODE1} (${IFACE_REMNANODE1})"
-    echo -e "  ${CYAN}remnanode2${NC} -> ${IP_REMNANODE2} (${IFACE_REMNANODE2})"
-}
-
-# ============================================
 # ПОЛУЧЕНИЕ ПОРТА ИЗ DOCKER-COMPOSE
 # ============================================
 get_node_port() {
@@ -183,50 +317,88 @@ get_node_port() {
 # ИНТЕРАКТИВНЫЙ ВВОД
 # ============================================
 get_user_input() {
-    print_header "Ввод параметров для новых нод"
+    print_header "Ввод параметров для нод"
     
     # Получаем порт из основной ноды
-    MAIN_NODE_PORT=$(get_node_port "/opt/remnanode/docker-compose.yml")
-    if [[ -z "$MAIN_NODE_PORT" ]]; then
+    local main_port=$(get_node_port "/opt/remnanode/docker-compose.yml")
+    if [[ -z "$main_port" ]]; then
         print_warning "Не удалось определить NODE_PORT из основной ноды"
-        MAIN_NODE_PORT="2222"
+        main_port="2222"
     fi
-    print_info "NODE_PORT основной ноды: ${MAIN_NODE_PORT}"
+    print_info "NODE_PORT основной ноды: ${main_port}"
+    PORTS[0]=$main_port
     echo ""
     
-    # Порт для remnanode1
-    echo -e "${YELLOW}Введите NODE_PORT для remnanode1${NC} [по умолчанию: ${MAIN_NODE_PORT}]:"
-    read -r input
-    PORT_REMNANODE1="${input:-$MAIN_NODE_PORT}"
-    print_success "NODE_PORT для remnanode1: ${PORT_REMNANODE1}"
-    echo ""
+    # Спрашиваем про порты с повторным вводом
+    while true; do
+        echo -e "${YELLOW}Использовать одинаковый порт (${main_port}) для всех дополнительных нод?${NC}"
+        echo -e "${YELLOW}(y - одинаковый для всех / n - ввести для каждой отдельно):${NC}"
+        read -r same_port
+        
+        if [[ "$same_port" == "y" || "$same_port" == "Y" || "$same_port" == "n" || "$same_port" == "N" ]]; then
+            break
+        else
+            print_error "Введите 'y' или 'n'"
+            echo ""
+        fi
+    done
     
-    # Порт для remnanode2
-    echo -e "${YELLOW}Введите NODE_PORT для remnanode2${NC} [по умолчанию: ${MAIN_NODE_PORT}]:"
-    read -r input
-    PORT_REMNANODE2="${input:-$MAIN_NODE_PORT}"
-    print_success "NODE_PORT для remnanode2: ${PORT_REMNANODE2}"
-    echo ""
-    
-    # SECRET_KEY для remnanode1
-    echo -e "${YELLOW}Вставьте SECRET_KEY из панели для remnanode1:${NC}"
-    read -r SECRET_KEY_REMNANODE1
-    if [[ -z "$SECRET_KEY_REMNANODE1" ]]; then
-        print_error "SECRET_KEY не может быть пустым!"
-        exit 1
+    if [[ "$same_port" == "y" || "$same_port" == "Y" ]]; then
+        # Одинаковый порт для всех
+        for i in $(seq 1 $ADDITIONAL_NODES); do
+            PORTS[$i]=$main_port
+        done
+        print_success "Порт ${main_port} будет использован для всех дополнительных нод"
+    else
+        # Разные порты
+        for i in $(seq 1 $ADDITIONAL_NODES); do
+            while true; do
+                echo ""
+                echo -e "${YELLOW}Введите NODE_PORT для remnanode${i}${NC} [по умолчанию: ${main_port}]:"
+                read -r input_port
+                
+                # Если пустой ввод - используем порт по умолчанию
+                if [[ -z "$input_port" ]]; then
+                    PORTS[$i]=$main_port
+                    break
+                fi
+                
+                # Проверяем, что это число
+                if [[ "$input_port" =~ ^[0-9]+$ ]]; then
+                    # Проверяем диапазон портов
+                    if [[ $input_port -ge 1 && $input_port -le 65535 ]]; then
+                        PORTS[$i]=$input_port
+                        break
+                    else
+                        print_error "Порт должен быть в диапазоне 1-65535"
+                    fi
+                else
+                    print_error "Введите число!"
+                fi
+            done
+            print_success "NODE_PORT для remnanode${i}: ${PORTS[$i]}"
+        done
     fi
-    print_success "SECRET_KEY для remnanode1 получен"
+    
     echo ""
     
-    # SECRET_KEY для remnanode2
-    echo -e "${YELLOW}Вставьте SECRET_KEY из панели для remnanode2:${NC}"
-    read -r SECRET_KEY_REMNANODE2
-    if [[ -z "$SECRET_KEY_REMNANODE2" ]]; then
-        print_error "SECRET_KEY не может быть пустым!"
-        exit 1
-    fi
-    print_success "SECRET_KEY для remnanode2 получен"
-    echo ""
+    # Запрашиваем SECRET_KEY для каждой дополнительной ноды
+    for i in $(seq 1 $ADDITIONAL_NODES); do
+        while true; do
+            echo -e "${YELLOW}Вставьте SECRET_KEY из панели для remnanode${i}:${NC}"
+            read -r secret_key
+            
+            if [[ -z "$secret_key" ]]; then
+                print_error "SECRET_KEY не может быть пустым!"
+                echo ""
+            else
+                SECRET_KEYS[$i]="$secret_key"
+                print_success "SECRET_KEY для remnanode${i} получен"
+                echo ""
+                break
+            fi
+        done
+    done
 }
 
 # ============================================
@@ -243,18 +415,14 @@ modify_main_node() {
     print_success "Создан бэкап: ${backup}"
     
     # Получаем NODE_PORT
-    local node_port=$(get_node_port "$file")
-    if [[ -z "$node_port" ]]; then
-        print_error "Не удалось определить NODE_PORT!"
-        exit 1
-    fi
+    local node_port=${PORTS[0]}
     print_info "NODE_PORT: ${node_port}"
     
     # Получаем версию образа из файла
     local image_version=$(grep -oP 'image: remnawave/node:\K[^\s]+' "$file" || echo "latest")
     
-    # Получаем SECRET_KEY из файла
-    local secret_key=$(grep -oP 'SECRET_KEY=\K[^\s]+' "$file" | tr -d '"' || echo "")
+    # Получаем SECRET_KEY из файла (убираем кавычки если есть)
+    local secret_key=$(grep 'SECRET_KEY=' "$file" | sed 's/.*SECRET_KEY=//' | sed 's/^"//' | sed 's/"$//' | tr -d "'" | xargs)
     
     # Создаём новый docker-compose.yml
     cat > "$file" << EOF
@@ -264,86 +432,80 @@ services:
     hostname: remnanode
     image: remnawave/node:${image_version}
     restart: always
+    ulimits:
+      nofile:
+        soft: 1048576
+        hard: 1048576
     ports:
-      - "${IP_REMNANODE}:${node_port}:${node_port}"
-      - "${IP_REMNANODE}:443:443"
+      - "${IPS[0]}:${node_port}:${node_port}"
+      - "${IPS[0]}:443:443"
     environment:
       - NODE_PORT=${node_port}
-      - SECRET_KEY=${secret_key}
+      - SECRET_KEY="${secret_key}"
     volumes:
       - /var/log/remnanode:/var/log/remnanode
 EOF
     
     print_success "Файл /opt/remnanode/docker-compose.yml обновлён"
-    print_info "IP: ${IP_REMNANODE}, PORT: ${node_port}"
+    print_info "IP: ${IPS[0]}, PORT: ${node_port}"
 }
 
 # ============================================
 # СОЗДАНИЕ ДОПОЛНИТЕЛЬНЫХ НОД
 # ============================================
 create_additional_nodes() {
-    print_header "Шаг 2: Создание remnanode1 и remnanode2"
+    print_header "Шаг 2: Создание дополнительных нод"
     
     # Получаем версию образа из основной ноды
     local image_version=$(grep -oP 'image: remnawave/node:\K[^\s]+' "/opt/remnanode/docker-compose.yml" || echo "latest")
     
-    # === remnanode1 ===
-    if [[ -d "/opt/remnanode1" ]]; then
-        if [[ "$REINSTALL_MODE" == true ]]; then
-            print_info "Удаление старой /opt/remnanode1..."
-            cd /opt/remnanode1 && docker compose down 2>/dev/null || true
-            rm -rf /opt/remnanode1
+    for i in $(seq 1 $ADDITIONAL_NODES); do
+        local node_dir="/opt/remnanode${i}"
+        local node_name="remnanode${i}"
+        local node_ip="${IPS[$i]}"
+        local node_port="${PORTS[$i]}"
+        local node_secret="${SECRET_KEYS[$i]}"
+        
+        print_info "Создание ${node_name}..."
+        
+        # Удаляем старую папку если режим переустановки
+        if [[ -d "$node_dir" ]]; then
+            if [[ "$REINSTALL_MODE" == true ]]; then
+                print_info "Удаление старой ${node_dir}..."
+                cd "$node_dir" && docker compose down 2>/dev/null || true
+                rm -rf "$node_dir"
+            fi
         fi
-    fi
-    mkdir -p /opt/remnanode1
-    
-    cat > "/opt/remnanode1/docker-compose.yml" << EOF
+        
+        # Создаём папку
+        mkdir -p "$node_dir"
+        
+        # Создаём docker-compose.yml
+        cat > "${node_dir}/docker-compose.yml" << EOF
 services:
   remnanode:
-    container_name: remnanode1
-    hostname: remnanode1
+    container_name: ${node_name}
+    hostname: ${node_name}
     image: remnawave/node:${image_version}
     restart: always
+    ulimits:
+      nofile:
+        soft: 1048576
+        hard: 1048576
     ports:
-      - "${IP_REMNANODE1}:${PORT_REMNANODE1}:${PORT_REMNANODE1}"
-      - "${IP_REMNANODE1}:443:443"
+      - "${node_ip}:${node_port}:${node_port}"
+      - "${node_ip}:443:443"
     environment:
-      - NODE_PORT=${PORT_REMNANODE1}
-      - SECRET_KEY=${SECRET_KEY_REMNANODE1}
+      - NODE_PORT=${node_port}
+      - SECRET_KEY="${node_secret}"
     volumes:
-      - /var/log/remnanode1:/var/log/remnanode
+      - /var/log/${node_name}:/var/log/remnanode
 EOF
-    print_success "Создан /opt/remnanode1/docker-compose.yml"
-    print_info "IP: ${IP_REMNANODE1}, PORT: ${PORT_REMNANODE1}"
-    
-    # === remnanode2 ===
-    if [[ -d "/opt/remnanode2" ]]; then
-        if [[ "$REINSTALL_MODE" == true ]]; then
-            print_info "Удаление старой /opt/remnanode2..."
-            cd /opt/remnanode2 && docker compose down 2>/dev/null || true
-            rm -rf /opt/remnanode2
-        fi
-    fi
-    mkdir -p /opt/remnanode2
-    
-    cat > "/opt/remnanode2/docker-compose.yml" << EOF
-services:
-  remnanode:
-    container_name: remnanode2
-    hostname: remnanode2
-    image: remnawave/node:${image_version}
-    restart: always
-    ports:
-      - "${IP_REMNANODE2}:${PORT_REMNANODE2}:${PORT_REMNANODE2}"
-      - "${IP_REMNANODE2}:443:443"
-    environment:
-      - NODE_PORT=${PORT_REMNANODE2}
-      - SECRET_KEY=${SECRET_KEY_REMNANODE2}
-    volumes:
-      - /var/log/remnanode2:/var/log/remnanode
-EOF
-    print_success "Создан /opt/remnanode2/docker-compose.yml"
-    print_info "IP: ${IP_REMNANODE2}, PORT: ${PORT_REMNANODE2}"
+        
+        print_success "Создан ${node_dir}/docker-compose.yml"
+        print_info "IP: ${node_ip}, PORT: ${node_port}"
+        echo ""
+    done
 }
 
 # ============================================
@@ -352,7 +514,7 @@ EOF
 install_pbr_scripts() {
     print_header "Шаг 3: Установка служебных скриптов PBR"
     
-    local GITHUB_BASE="https://raw.githubusercontent.com/probizvpn/remnanodes-yacl/refs/heads/main"
+    local GITHUB_BASE="https://raw.githubusercontent.com/probizvpn/remnanodes-yacl/main"
     
     # 3.1 setup-pbr.sh
     print_info "Скачивание setup-pbr.sh..."
@@ -425,30 +587,31 @@ start_nodes() {
     # Останавливаем существующие контейнеры
     print_info "Останавливаем существующие контейнеры..."
     
+    # Основная нода
     if [[ -f "/opt/remnanode/docker-compose.yml" ]]; then
         cd /opt/remnanode && docker compose down 2>/dev/null || true
     fi
-    if [[ -f "/opt/remnanode1/docker-compose.yml" ]]; then
-        cd /opt/remnanode1 && docker compose down 2>/dev/null || true
-    fi
-    if [[ -f "/opt/remnanode2/docker-compose.yml" ]]; then
-        cd /opt/remnanode2 && docker compose down 2>/dev/null || true
-    fi
+    
+    # Дополнительные ноды
+    for i in $(seq 1 $((MAX_NODES - 1))); do
+        if [[ -f "/opt/remnanode${i}/docker-compose.yml" ]]; then
+            cd "/opt/remnanode${i}" && docker compose down 2>/dev/null || true
+        fi
+    done
     
     print_success "Контейнеры остановлены"
     
-    # Запускаем ноды
+    # Запускаем основную ноду
     print_info "Запуск remnanode..."
     cd /opt/remnanode && docker compose up -d
     print_success "remnanode запущен"
     
-    print_info "Запуск remnanode1..."
-    cd /opt/remnanode1 && docker compose up -d
-    print_success "remnanode1 запущен"
-    
-    print_info "Запуск remnanode2..."
-    cd /opt/remnanode2 && docker compose up -d
-    print_success "remnanode2 запущен"
+    # Запускаем дополнительные ноды
+    for i in $(seq 1 $ADDITIONAL_NODES); do
+        print_info "Запуск remnanode${i}..."
+        cd "/opt/remnanode${i}" && docker compose up -d
+        print_success "remnanode${i} запущен"
+    done
     
     # Ждём немного и запускаем PBR
     print_info "Ожидание запуска контейнеров (5 сек)..."
@@ -465,23 +628,23 @@ start_nodes() {
 print_summary() {
     print_header "УСТАНОВКА ЗАВЕРШЕНА!"
     
-    echo -e "${GREEN}Настроенные ноды:${NC}"
+    echo -e "${GREEN}Модифицированная основная нода:${NC}"
     echo ""
     echo -e "  ${CYAN}remnanode${NC}"
     echo -e "    Папка: /opt/remnanode"
-    echo -e "    IP: ${IP_REMNANODE}"
-    echo -e "    Порт: $(get_node_port /opt/remnanode/docker-compose.yml)"
+    echo -e "    IP: ${IPS[0]}"
+    echo -e "    Порт: ${PORTS[0]}"
     echo ""
-    echo -e "  ${CYAN}remnanode1${NC}"
-    echo -e "    Папка: /opt/remnanode1"
-    echo -e "    IP: ${IP_REMNANODE1}"
-    echo -e "    Порт: ${PORT_REMNANODE1}"
+    
+    echo -e "${GREEN}Установленные дополнительные ноды:${NC}"
     echo ""
-    echo -e "  ${CYAN}remnanode2${NC}"
-    echo -e "    Папка: /opt/remnanode2"
-    echo -e "    IP: ${IP_REMNANODE2}"
-    echo -e "    Порт: ${PORT_REMNANODE2}"
-    echo ""
+    for i in $(seq 1 $ADDITIONAL_NODES); do
+        echo -e "  ${CYAN}remnanode${i}${NC}"
+        echo -e "    Папка: /opt/remnanode${i}"
+        echo -e "    IP: ${IPS[$i]}"
+        echo -e "    Порт: ${PORTS[$i]}"
+        echo ""
+    done
     
     echo -e "${GREEN}Установленные сервисы:${NC}"
     echo -e "  - pbr-setup.service (запуск PBR при загрузке)"
@@ -490,11 +653,18 @@ print_summary() {
     
     echo -e "${GREEN}Полезные команды:${NC}"
     echo -e "  Статус контейнеров:  ${YELLOW}docker ps${NC}"
-    echo -e "  Логи remnanode:      ${YELLOW}docker logs remnanode${NC}"
-    echo -e "  Логи remnanode1:     ${YELLOW}docker logs remnanode1${NC}"
-    echo -e "  Логи remnanode2:     ${YELLOW}docker logs remnanode2${NC}"
+    echo -e "  Логи основной ноды:  ${YELLOW}docker logs remnanode${NC}"
+    for i in $(seq 1 $ADDITIONAL_NODES); do
+        echo -e "  Логи ноды ${i}:         ${YELLOW}docker logs remnanode${i}${NC}"
+    done
     echo -e "  Статус PBR watch:    ${YELLOW}systemctl status pbr-docker-watch${NC}"
     echo -e "  Перезапуск PBR:      ${YELLOW}/opt/setup-pbr.sh${NC}"
+    echo ""
+    
+    echo -e "${GREEN}Информация о нагрузке:${NC}"
+    echo -e "  Всего нод: ${TOTAL_NODES} (1 основная + ${ADDITIONAL_NODES} дополнительных)"
+    echo -e "  Примерная ёмкость: ~$((TOTAL_NODES * 50)) пользователей (при 50 на ноду)"
+    echo -e "  Характеристики сервера: ${CPU_CORES} CPU, ${RAM_GB} GB RAM"
 }
 
 # ============================================
@@ -511,13 +681,15 @@ main() {
     echo "  ╚═╝  ╚═╝╚══════╝╚═╝     ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝  ╚═══╝ ╚═════╝ ╚═════╝ ╚══════╝"
     echo -e "${NC}"
     echo -e "${YELLOW}  Multi-Instance Setup with Policy-Based Routing${NC}"
+    echo -e "${YELLOW}  Версия 2.0${NC}"
     echo ""
-    echo -e "${MAGENTA}  Specially for Solobot Community${NC}"
+    echo -e "${MAGENTA}  Specially for SoloBot Community${NC}"
     echo -e "${ORANGE}  GitHub SoloBot: https://github.com/Vladless/Solo_bot${NC}"
     echo ""
     
     check_root
     check_prerequisites
+    get_system_specs
     get_internal_ips
     get_user_input
     modify_main_node
