@@ -499,7 +499,7 @@ services:
       - NODE_PORT=${node_port}
       - SECRET_KEY="${node_secret}"
     volumes:
-      - /var/log/${node_name}:/var/log/remnanode
+      - /var/log/remnanode:/var/log/remnanode
 EOF
         
         print_success "Создан ${node_dir}/docker-compose.yml"
